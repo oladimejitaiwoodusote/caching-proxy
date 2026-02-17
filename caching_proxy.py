@@ -17,13 +17,27 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         cache_key = self.path
 
+        HOP_BY_HOP = {
+            "content-encoding",
+            "transfer-encoding",
+            "content-length",
+            "connection",
+            "keep-alive",
+            "proxy-authentication",
+            "proxy-authorization",
+            "te",
+            "trailer",
+            "upgrade",
+        }
+
         # 1. Check cache
         if cache_key in cache:
             cached = cache[cache_key]
             self.send_response(cached["status"])
 
             for key, value in cached["headers"].items():
-                self.send_header(key, value)
+                if key.lower() not in HOP_BY_HOP:
+                    self.send_header(key, value)
 
             self.send_header("X-Cache", "HIT")
             self.end_headers()
@@ -44,7 +58,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         #4. Return response
         self.send_response(response.status_code)
         for key, value in response.headers.items():
-            self.send_header(key, value)
+            if key.lower() not in HOP_BY_HOP:
+                self.send_header(key, value)
 
         self.send_header("X-Cache", "MISS")
         self.end_headers()
