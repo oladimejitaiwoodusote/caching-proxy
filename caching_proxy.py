@@ -9,29 +9,40 @@ def parse_args():
     parser.add_argument("--port", type=int, help="Port to run the proxy on")
     parser.add_argument("--origin", type=str, help="Origin server URL")
     parser.add_argument("--clear-cache", action="store_true")
+    parser.add_argument("--ttl", type=int, default=30, help="Cache TTL in seconds")
     return parser.parse_args()
+
+HOP_BY_HOP = {
+    "content-encoding",
+    "transfer-encoding",
+    "content-length",
+    "connection",
+    "keep-alive",
+    "proxy-authentication",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "upgrade",
+}
+
+def fetch_from_origin(origin, path):
+    url = origin + path
+    try:
+        return requests.get(url, timeout =5)
+    except requests.RequestException as e:
+        print(f"❌ Error contacting origin: {e}")
+        return None
 
 class ProxyHandler(BaseHTTPRequestHandler):
     origin = None
 
     def do_GET(self):
         cache_key = self.path
-
-        HOP_BY_HOP = {
-            "content-encoding",
-            "transfer-encoding",
-            "content-length",
-            "connection",
-            "keep-alive",
-            "proxy-authentication",
-            "proxy-authorization",
-            "te",
-            "trailer",
-            "upgrade",
-        }
+        print(f"➡ Incoming request: {self.path}")
 
         # 1. Check cache
         if cache_key in cache:
+            print(f"🟢 Cache Hit: {cache_key}")
             cached = cache[cache_key]
             self.send_response(cached["status"])
 
@@ -45,15 +56,23 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         #2. Forward request to origin
-        url = self.origin + self.path
-        response = requests.get(url)
+        print(f"🔴 Cache MISS: {cache_key}")
+        response = fetch_from_origin(self.origin, self.path)
+        
+        if response is None:
+            self.send_response(502)
+            self.end_headers()
+            self.wfile.write(b"Bad Gateway")
+            return
 
         #3. Save in cache
-        cache[cache_key] = {
-            "status": response.status_code,
-            "headers": dict(response.headers),
-            "body": response.content
-        }
+        if response.status_code == 200:
+            cache[cache_key] = {
+                "status": response.status_code,
+                "headers": dict(response.headers),
+                "body": response.content,
+                "timestamp": None #placeholder for TTL
+            }
 
         #4. Return response
         self.send_response(response.status_code)
@@ -65,8 +84,23 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(response.content)
 
+    def do_POST(self):
+        self.send_response(405)
+        self.end_headers()
+        self.wfile.write(b"Method Not Allowed")
+
+    def do_PUT(self):
+        self.send_response(405)
+        self.end_headers()
+        self.wfile.write(b"Method Not Allowed")
+
+    def do_DELETE(self):
+        self.send_response(405)
+        self.end_headers()
+        self.wfile.write(b"Method Not Allowed")
+
 def run_server(port, origin):
-    ProxyHandler.origin = origin
+    ProxyHandler.origin = origin.rstrip("/")
     server = HTTPServer(("localhost", port), ProxyHandler)
     print(f"🚀 Caching proxy running on port {port}")
     print(f"➡️ Forwarding requests to {origin}")
