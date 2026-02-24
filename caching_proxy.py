@@ -1,9 +1,11 @@
 import argparse
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import requests
 import time
+import threading
 
 cache = {}
+cache_lock = threading.Lock() #✅ Thread-safe lock
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple caching proxy")
@@ -38,29 +40,29 @@ class ProxyHandler(BaseHTTPRequestHandler):
     origin = None
 
     def do_GET(self):
-        cache_key = self.path
-        print(f"➡ Incoming request: {self.path}")
+        cache_key = f"{self.command}:{self.path}"
+        print(f"➡ Incoming request: {self.command}:{self.path}")
 
         # 1. Check cache
-        if cache_key in cache:
-            cached = cache[cache_key]
-            age = time.time() - cached["timestamp"]
+        with cache_lock:
+            cached = cache.get(cache_key)
+            if cached:
+                age = time.time() - cached["timestamp"]
 
-            if age < self.ttl:
-                print(f"🟢 Cache Hit: {cache_key}")
-                self.send_response(cached["status"])
+                if age < self.ttl:
+                    print(f"🟢 Cache Hit: {cache_key}")
+                    self.send_response(cached["status"])
+                    for key, value in cached["headers"].items():
+                        if key.lower() not in HOP_BY_HOP:
+                            self.send_header(key, value)
 
-                for key, value in cached["headers"].items():
-                    if key.lower() not in HOP_BY_HOP:
-                        self.send_header(key, value)
-
-                self.send_header("X-Cache", "HIT")
-                self.end_headers()
-                self.wfile.write(cached["body"])
-                return
-            else:
-                print(f"⏰ Cache expired: {cache_key}")
-                del cache[cache_key]
+                    self.send_header("X-Cache", "HIT")
+                    self.end_headers()
+                    self.wfile.write(cached["body"])
+                    return
+                else:
+                    print(f"⏰ Cache expired: {cache_key}")
+                    del cache[cache_key]
 
         #2. Forward request to origin
         print(f"🔴 Cache MISS: {cache_key}")
@@ -74,19 +76,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         #3. Save in cache
         if response.status_code == 200:
-            cache[cache_key] = {
-                "status": response.status_code,
-                "headers": dict(response.headers),
-                "body": response.content,
-                "timestamp": time.time()
-            }
+            with cache_lock:
+                cache[cache_key] = {
+                    "status": response.status_code,
+                    "headers": dict(response.headers),
+                    "body": response.content,
+                    "timestamp": time.time()
+                }
 
         #4. Return response
         self.send_response(response.status_code)
         for key, value in response.headers.items():
             if key.lower() not in HOP_BY_HOP:
                 self.send_header(key, value)
-
         self.send_header("X-Cache", "MISS")
         self.end_headers()
         self.wfile.write(response.content)
@@ -109,7 +111,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 def run_server(port, origin, ttl):
     ProxyHandler.origin = origin.rstrip("/")
     ProxyHandler.ttl = ttl
-    server = HTTPServer(("localhost", port), ProxyHandler)
+    server = ThreadingHTTPServer(("localhost", port), ProxyHandler)
     print(f"🚀 Caching proxy running on port {port}")
     print(f"➡️ Forwarding requests to {origin}")
     print(f"⏳ TTL set to {ttl} seconds")
