@@ -1,6 +1,7 @@
 import argparse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import requests
+import time
 
 cache = {}
 
@@ -42,18 +43,24 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         # 1. Check cache
         if cache_key in cache:
-            print(f"🟢 Cache Hit: {cache_key}")
             cached = cache[cache_key]
-            self.send_response(cached["status"])
+            age = time.time() - cached["timestamp"]
 
-            for key, value in cached["headers"].items():
-                if key.lower() not in HOP_BY_HOP:
-                    self.send_header(key, value)
+            if age < self.ttl:
+                print(f"🟢 Cache Hit: {cache_key}")
+                self.send_response(cached["status"])
 
-            self.send_header("X-Cache", "HIT")
-            self.end_headers()
-            self.wfile.write(cached["body"])
-            return
+                for key, value in cached["headers"].items():
+                    if key.lower() not in HOP_BY_HOP:
+                        self.send_header(key, value)
+
+                self.send_header("X-Cache", "HIT")
+                self.end_headers()
+                self.wfile.write(cached["body"])
+                return
+            else:
+                print(f"⏰ Cache expired: {cache_key}")
+                del cache[cache_key]
 
         #2. Forward request to origin
         print(f"🔴 Cache MISS: {cache_key}")
@@ -71,7 +78,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "status": response.status_code,
                 "headers": dict(response.headers),
                 "body": response.content,
-                "timestamp": None #placeholder for TTL
+                "timestamp": time.time()
             }
 
         #4. Return response
@@ -99,11 +106,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Method Not Allowed")
 
-def run_server(port, origin):
+def run_server(port, origin, ttl):
     ProxyHandler.origin = origin.rstrip("/")
+    ProxyHandler.ttl = ttl
     server = HTTPServer(("localhost", port), ProxyHandler)
     print(f"🚀 Caching proxy running on port {port}")
     print(f"➡️ Forwarding requests to {origin}")
+    print(f"⏳ TTL set to {ttl} seconds")
     server.serve_forever()
 
 if __name__ == "__main__":
@@ -118,4 +127,4 @@ if __name__ == "__main__":
         print("❌ --port and --origin are required")
         exit(1)
 
-    run_server(args.port, args.origin)
+    run_server(args.port, args.origin, args.ttl)
