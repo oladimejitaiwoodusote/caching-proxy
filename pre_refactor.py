@@ -32,22 +32,17 @@ HOP_BY_HOP = {
     "trailer",
     "upgrade",
 }
-        
-class ProxyServer:
-    def __init__(self, origin, ttl):
-        self.origin = origin
-        self.ttl = ttl
 
-    def fetch_from_origin(self, path):
-        url = self.origin + path
-        try:
-            return requests.get(url, timeout=5)
-        except requests.RequestException as e:
-            print(f"❌ Error contacting origin: {e}")
-            return None
+def fetch_from_origin(origin, path):
+    url = origin + path
+    try:
+        return requests.get(url, timeout =5)
+    except requests.RequestException as e:
+        print(f"❌ Error contacting origin: {e}")
+        return None
+        
 
 class ProxyHandler(BaseHTTPRequestHandler):
-    proxy = None
     origin = None
 
     def do_GET(self):
@@ -168,8 +163,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Method Not Allowed")
 
 def run_server(port, origin, ttl):
-    proxy = ProxyServer(origin.rstrip("/"), ttl)
-    ProxyHandler.proxy = proxy
+    ProxyHandler.origin = origin.rstrip("/")
+    ProxyHandler.ttl = ttl
     server = ThreadingHTTPServer(("localhost", port), ProxyHandler)
     print(f"🚀 Caching proxy running on port {port}")
     print(f"➡️ Forwarding requests to {origin}")
