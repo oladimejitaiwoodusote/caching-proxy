@@ -46,6 +46,104 @@ class ProxyServer:
             print(f"❌ Error contacting origin: {e}")
             return None
 
+    def handle_request(self, method, path):
+        cache_key = f"{method}:{path}"
+        print(f"➡ Incoming request: {cache_key}")
+
+        #1. Check cache
+        with cache_lock:
+            cached = cache.get(cache_key)
+            if cached:
+                cache.move_to_end(cache_key)
+
+                age = time.time() - cached["timestamp"]
+
+                if age < self.ttl:
+                    print(f"🟢 Cache Hit: {cache_key}")
+                    return {
+                        "status": cached["status"],
+                        "headers": cached["headers"],
+                        "body": cached["body"],
+                        "cache": "HIT"
+                    }
+                else:
+                    print(f"⏰ Cache expired: {cache_key}")
+                    del cache[cache_key]
+
+        #2. Request coalescing
+        print(f"🔴 Cache MISS: {cache_key}")
+        is_first = False
+
+        with cache_lock:
+            if cache_key in in_flight_requests:
+                event = in_flight_requests[cache_key]
+                print(f"⏳ Waiting for in-flight request: {cache_key}")
+            else:
+                event = threading.Event()
+                in_flight_requests[cache_key] = event
+                event.clear()
+                is_first = True
+
+        if not is_first:
+            event.wait()
+            with cache_lock:
+                cached = cache.get(cache_key)
+                if cached:
+                    cache.move_to_end(cache_key)
+                    print(f"🟢 Using cached result after wait: {cache_key}")
+                    return {
+                        "status": cached["status"],
+                        "headers": cached["headers"],
+                        "body": cached["body"],
+                        "cache": "HIT"
+                    }
+
+        #3. Fetch from origin
+        response = self.fetch_from_origin(path)
+
+        if response is None:
+            with cache_lock:
+                event = in_flight_requests.pop(cache_key, None)
+                if event:
+                    event.set()
+            
+            return {
+                "status": 502,
+                "headers": {},
+                "body": b'Bad Gateway',
+                "cache": "MISS"
+            }
+
+        #4. Save in cache
+        if response.status_code == 200:
+            with cache_lock:
+                if len(cache) >= MAX_CACHE_ITEMS:
+                    evicted_key, _ = cache.popitems(last = False)
+                    print(f"🗑 Evicting LRU cache entry: {evicted_key}")
+                
+                cache[cache_key] = {
+                    "status": response.status_code,
+                    "headers": dict(response.headers),
+                    "body": response.content,
+                    "timestamp": time.time()
+                }
+
+                cache.move_to_end(cache_key)
+
+        # release waiting requests
+        with cache_lock:
+            if cache_key in in_flight_requests:
+                event = in_flight_requests.pop(cache_key)
+                event.set()
+
+        return {
+            "status": response.status_code,
+            "headers": dict(response.headers),
+            "body": response.content,
+            "cache": "MISS"
+        }
+
+
 class ProxyHandler(BaseHTTPRequestHandler):
     proxy = None
     origin = None
@@ -108,9 +206,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(cached["body"])
                     return
-
         
-        response = fetch_from_origin(self.origin, self.path)
+        response = self.proxy.fetch_from_origin(self.path)
         
         if response is None:
             with cache_lock:
