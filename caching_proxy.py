@@ -118,7 +118,7 @@ class ProxyServer:
         if response.status_code == 200:
             with cache_lock:
                 if len(cache) >= MAX_CACHE_ITEMS:
-                    evicted_key, _ = cache.popitems(last = False)
+                    evicted_key, _ = cache.popitem(last = False)
                     print(f"🗑 Evicting LRU cache entry: {evicted_key}")
                 
                 cache[cache_key] = {
@@ -146,108 +146,19 @@ class ProxyServer:
 
 class ProxyHandler(BaseHTTPRequestHandler):
     proxy = None
-    origin = None
 
     def do_GET(self):
-        cache_key = f"{self.command}:{self.path}"
-        print(f"➡ Incoming request: {self.command}:{self.path}")
+        result = self.proxy.handle_request(self.command, self.path)
 
-        # 1. Check cache
-        with cache_lock:
-            cached = cache.get(cache_key)
-            if cached:
-                cache.move_to_end(cache_key)
+        self.send_response(result["status"])
 
-                age = time.time() - cached["timestamp"]
-
-                if age < self.ttl:
-                    print(f"🟢 Cache Hit: {cache_key}")
-                    self.send_response(cached["status"])
-                    for key, value in cached["headers"].items():
-                        if key.lower() not in HOP_BY_HOP:
-                            self.send_header(key, value)
-
-                    self.send_header("X-Cache", "HIT")
-                    self.end_headers()
-                    self.wfile.write(cached["body"])
-                    return
-                else:
-                    print(f"⏰ Cache expired: {cache_key}")
-                    del cache[cache_key]
-
-        #2. Forward request to origin
-        print(f"🔴 Cache MISS: {cache_key}")
-        is_first = False
-
-        with cache_lock:
-            if cache_key in in_flight_requests:
-                event = in_flight_requests[cache_key]
-                print(f"⏳ Waiting for in-flight request: {cache_key}")
-            else:
-                event = threading.Event()
-                in_flight_requests[cache_key] = event
-                event.clear()
-                is_first = True
-
-        #If not first request, wait
-        if not is_first:
-            event.wait()
-            with cache_lock:
-                cached = cache.get(cache_key)
-                if cached:
-                    cache.move_to_end(cache_key)
-
-                    print(f"🟢 Using cached result after wait: {cache_key}")
-                    self.send_response(cached["status"])
-                    for key,value in cached["headers"].items():
-                        if key.lower() not in HOP_BY_HOP:
-                            self.send_header(key, value)
-                    self.send_header("X-Cache", "HIT")
-                    self.end_headers()
-                    self.wfile.write(cached["body"])
-                    return
-        
-        response = self.proxy.fetch_from_origin(self.path)
-        
-        if response is None:
-            with cache_lock:
-                event = in_flight_requests.pop(cache_key, None)
-                if event:
-                    event.set()
-            self.send_response(502)
-            self.end_headers()
-            self.wfile.write(b"Bad Gateway")
-            return
-
-        #3. Save in cache
-        if response.status_code == 200:
-            with cache_lock:
-                if len(cache) >= MAX_CACHE_ITEMS:
-                    evicted_key, _ = cache.popitem(last=False)
-                    print(f"🗑 Evicting LRU cache entry: {evicted_key}")
-
-                cache[cache_key] = {
-                    "status": response.status_code,
-                    "headers": dict(response.headers),
-                    "body": response.content,
-                    "timestamp": time.time()
-                }
-
-                cache.move_to_end(cache_key)
-
-        with cache_lock:
-            if cache_key in in_flight_requests:
-                event = in_flight_requests.pop(cache_key)
-                event.set()
-
-        #4. Return response
-        self.send_response(response.status_code)
-        for key, value in response.headers.items():
+        for key,value in result["headers"].items():
             if key.lower() not in HOP_BY_HOP:
                 self.send_header(key, value)
-        self.send_header("X-Cache", "MISS")
+
+        self.send_header("X-Cache", result["cache"])
         self.end_headers()
-        self.wfile.write(response.content)
+        self.wfile.write(result["body"])
 
     def do_POST(self):
         self.send_response(405)
