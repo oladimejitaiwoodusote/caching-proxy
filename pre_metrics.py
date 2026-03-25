@@ -5,6 +5,8 @@ import time
 import threading
 from collections import OrderedDict
 
+
+
 # cache = {}
 cache = OrderedDict()
 MAX_CACHE_ITEMS = 100
@@ -32,24 +34,25 @@ HOP_BY_HOP = {
     "trailer",
     "upgrade",
 }
-
-def fetch_from_origin(origin, path):
-    url = origin + path
-    try:
-        return requests.get(url, timeout =5)
-    except requests.RequestException as e:
-        print(f"❌ Error contacting origin: {e}")
-        return None
         
+class ProxyServer:
+    def __init__(self, origin, ttl):
+        self.origin = origin
+        self.ttl = ttl
 
-class ProxyHandler(BaseHTTPRequestHandler):
-    origin = None
+    def fetch_from_origin(self, path):
+        url = self.origin + path
+        try:
+            return requests.get(url, timeout=5)
+        except requests.RequestException as e:
+            print(f"❌ Error contacting origin: {e}")
+            return None
 
-    def do_GET(self):
-        cache_key = f"{self.command}:{self.path}"
-        print(f"➡ Incoming request: {self.command}:{self.path}")
+    def handle_request(self, method, path):
+        cache_key = f"{method}:{path}"
+        print(f"➡ Incoming request: {cache_key}")
 
-        # 1. Check cache
+        #1. Check cache
         with cache_lock:
             cached = cache.get(cache_key)
             if cached:
@@ -59,20 +62,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
                 if age < self.ttl:
                     print(f"🟢 Cache Hit: {cache_key}")
-                    self.send_response(cached["status"])
-                    for key, value in cached["headers"].items():
-                        if key.lower() not in HOP_BY_HOP:
-                            self.send_header(key, value)
-
-                    self.send_header("X-Cache", "HIT")
-                    self.end_headers()
-                    self.wfile.write(cached["body"])
-                    return
+                    return {
+                        "status": cached["status"],
+                        "headers": cached["headers"],
+                        "body": cached["body"],
+                        "cache": "HIT"
+                    }
                 else:
                     print(f"⏰ Cache expired: {cache_key}")
                     del cache[cache_key]
 
-        #2. Forward request to origin
+        #2. Request coalescing
         print(f"🔴 Cache MISS: {cache_key}")
         is_first = False
 
@@ -86,44 +86,43 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 event.clear()
                 is_first = True
 
-        #If not first request, wait
         if not is_first:
             event.wait()
             with cache_lock:
                 cached = cache.get(cache_key)
                 if cached:
                     cache.move_to_end(cache_key)
-
                     print(f"🟢 Using cached result after wait: {cache_key}")
-                    self.send_response(cached["status"])
-                    for key,value in cached["headers"].items():
-                        if key.lower() not in HOP_BY_HOP:
-                            self.send_header(key, value)
-                    self.send_header("X-Cache", "HIT")
-                    self.end_headers()
-                    self.wfile.write(cached["body"])
-                    return
+                    return {
+                        "status": cached["status"],
+                        "headers": cached["headers"],
+                        "body": cached["body"],
+                        "cache": "HIT"
+                    }
 
-        
-        response = fetch_from_origin(self.origin, self.path)
-        
+        #3. Fetch from origin
+        response = self.fetch_from_origin(path)
+
         if response is None:
             with cache_lock:
                 event = in_flight_requests.pop(cache_key, None)
                 if event:
                     event.set()
-            self.send_response(502)
-            self.end_headers()
-            self.wfile.write(b"Bad Gateway")
-            return
+            
+            return {
+                "status": 502,
+                "headers": {},
+                "body": b'Bad Gateway',
+                "cache": "MISS"
+            }
 
-        #3. Save in cache
+        #4. Save in cache
         if response.status_code == 200:
             with cache_lock:
                 if len(cache) >= MAX_CACHE_ITEMS:
-                    evicted_key, _ = cache.popitem(last=False)
+                    evicted_key, _ = cache.popitem(last = False)
                     print(f"🗑 Evicting LRU cache entry: {evicted_key}")
-
+                
                 cache[cache_key] = {
                     "status": response.status_code,
                     "headers": dict(response.headers),
@@ -133,19 +132,35 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
                 cache.move_to_end(cache_key)
 
+        # release waiting requests
         with cache_lock:
             if cache_key in in_flight_requests:
                 event = in_flight_requests.pop(cache_key)
                 event.set()
 
-        #4. Return response
-        self.send_response(response.status_code)
-        for key, value in response.headers.items():
+        return {
+            "status": response.status_code,
+            "headers": dict(response.headers),
+            "body": response.content,
+            "cache": "MISS"
+        }
+
+
+class ProxyHandler(BaseHTTPRequestHandler):
+    proxy = None
+
+    def do_GET(self):
+        result = self.proxy.handle_request(self.command, self.path)
+
+        self.send_response(result["status"])
+
+        for key,value in result["headers"].items():
             if key.lower() not in HOP_BY_HOP:
                 self.send_header(key, value)
-        self.send_header("X-Cache", "MISS")
+
+        self.send_header("X-Cache", result["cache"])
         self.end_headers()
-        self.wfile.write(response.content)
+        self.wfile.write(result["body"])
 
     def do_POST(self):
         self.send_response(405)
@@ -163,8 +178,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Method Not Allowed")
 
 def run_server(port, origin, ttl):
-    ProxyHandler.origin = origin.rstrip("/")
-    ProxyHandler.ttl = ttl
+    proxy = ProxyServer(origin.rstrip("/"), ttl)
+    ProxyHandler.proxy = proxy
     server = ThreadingHTTPServer(("localhost", port), ProxyHandler)
     print(f"🚀 Caching proxy running on port {port}")
     print(f"➡️ Forwarding requests to {origin}")

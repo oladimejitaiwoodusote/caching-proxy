@@ -5,6 +5,16 @@ import time
 import threading
 from collections import OrderedDict
 
+metrics = {
+    "requests": 0,
+    "cache_hits": 0,
+    "cache_misses": 0,
+    "origin_requests": 0,
+    "evictions": 0,
+}
+
+metrics_lock = threading.Lock()
+
 # cache = {}
 cache = OrderedDict()
 MAX_CACHE_ITEMS = 100
@@ -38,6 +48,17 @@ class ProxyServer:
         self.origin = origin
         self.ttl = ttl
 
+    def get_metrics(self):
+        with metrics_lock:
+            total = metrics["requests"]
+            hits = metrics["cache_hits"]
+            hit_ratio = (hits / total) if total > 0 else 0
+
+            return {
+                **metrics,
+                "hit_ratio" : round(hit_ratio, 3)
+            }
+
     def fetch_from_origin(self, path):
         url = self.origin + path
         try:
@@ -47,6 +68,9 @@ class ProxyServer:
             return None
 
     def handle_request(self, method, path):
+        with metrics_lock:
+            metrics["requests"] += 1
+
         cache_key = f"{method}:{path}"
         print(f"➡ Incoming request: {cache_key}")
 
@@ -59,6 +83,9 @@ class ProxyServer:
                 age = time.time() - cached["timestamp"]
 
                 if age < self.ttl:
+                    with metrics_lock:
+                        metrics["cache_hits"] += 1
+
                     print(f"🟢 Cache Hit: {cache_key}")
                     return {
                         "status": cached["status"],
@@ -72,6 +99,9 @@ class ProxyServer:
 
         #2. Request coalescing
         print(f"🔴 Cache MISS: {cache_key}")
+        with metrics_lock:
+            metrics["cache_misses"] += 1
+
         is_first = False
 
         with cache_lock:
@@ -85,10 +115,13 @@ class ProxyServer:
                 is_first = True
 
         if not is_first:
+            
             event.wait()
             with cache_lock:
                 cached = cache.get(cache_key)
                 if cached:
+                    with metrics_lock:
+                        metrics["cache_hits"] += 1
                     cache.move_to_end(cache_key)
                     print(f"🟢 Using cached result after wait: {cache_key}")
                     return {
@@ -99,6 +132,9 @@ class ProxyServer:
                     }
 
         #3. Fetch from origin
+        with metrics_lock:
+            metrics["origin_requests"] += 1
+
         response = self.fetch_from_origin(path)
 
         if response is None:
@@ -118,6 +154,9 @@ class ProxyServer:
         if response.status_code == 200:
             with cache_lock:
                 if len(cache) >= MAX_CACHE_ITEMS:
+                    with metrics_lock:
+                        metrics["evictions"] += 1
+
                     evicted_key, _ = cache.popitem(last = False)
                     print(f"🗑 Evicting LRU cache entry: {evicted_key}")
                 
@@ -148,6 +187,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
     proxy = None
 
     def do_GET(self):
+        if self.path == "/metrics":
+            data = self.proxy.get_metrics()
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+
+            import json
+            self.wfile.write(json.dumps(data).encode())
+            return
+
         result = self.proxy.handle_request(self.command, self.path)
 
         self.send_response(result["status"])
