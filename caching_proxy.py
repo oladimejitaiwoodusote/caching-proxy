@@ -124,7 +124,6 @@ class ProxyServer:
             if cache_key in in_flight_requests:
                 event = in_flight_requests[cache_key]
                 log_event("info", "coalesced_wait", cache_key=cache_key)
-                #Think this one is wrong
             else:
                 event = threading.Event()
                 in_flight_requests[cache_key] = event
@@ -157,6 +156,7 @@ class ProxyServer:
             metrics["origin_requests"] += 1
 
         response = self.fetch_from_origin(path)
+        log_event("info", "origin_fetch", cache_key=cache_key, status=response.status_code)
 
         if response is None:
             with cache_lock:
@@ -214,7 +214,6 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
 
-            import json
             self.wfile.write(json.dumps(data).encode())
             return
 
@@ -249,11 +248,17 @@ def run_server(port, origin, ttl):
     proxy = ProxyServer(origin.rstrip("/"), ttl)
     ProxyHandler.proxy = proxy
     server = ThreadingHTTPServer(("localhost", port), ProxyHandler)
-    # print(f"🚀 Caching proxy running on port {port}")
-    # print(f"➡️ Forwarding requests to {origin}")
-    # print(f"⏳ TTL set to {ttl} seconds")
+
     log_event("info", "server_started", port=port, origin=origin, ttl=ttl)
-    server.serve_forever()
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        log_event("info", "shutdown_signal_received")
+    finally:
+        server.shutdown()
+        server.server_close()
+        log_event("info", "server_stopped")
 
 if __name__ == "__main__":
     args = parse_args()

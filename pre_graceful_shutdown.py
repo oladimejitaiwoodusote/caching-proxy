@@ -1,9 +1,24 @@
+import logging
+import json
 import argparse
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import requests
 import time
 import threading
 from collections import OrderedDict
+from datetime import datetime
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("proxy")
+
+def log_event(level, event, **kwargs):
+    log = {
+        "event": event,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        **kwargs
+    }
+
+    getattr(logger, level)(json.dumps(log))
 
 metrics = {
     "requests": 0,
@@ -69,7 +84,7 @@ class ProxyServer:
         try:
             return requests.get(url, timeout=5)
         except requests.RequestException as e:
-            print(f"❌ Error contacting origin: {e}")
+            log_event("error", "origin_error", error=str(e))
             return None
 
     def handle_request(self, method, path):
@@ -77,7 +92,7 @@ class ProxyServer:
             metrics["requests"] += 1
 
         cache_key = f"{method}:{path}"
-        print(f"➡ Incoming request: {cache_key}")
+        log_event("info", "request_received", cache_key=cache_key)
 
         #1. Check cache
         with cache_lock:
@@ -91,7 +106,7 @@ class ProxyServer:
                     with metrics_lock:
                         metrics["cache_hits"] += 1
 
-                    print(f"🟢 Cache Hit: {cache_key}")
+                    log_event("info", "cache_hit", cache_key=cache_key)
                     return {
                         "status": cached["status"],
                         "headers": cached["headers"],
@@ -99,17 +114,17 @@ class ProxyServer:
                         "cache": "HIT"
                     }
                 else:
-                    print(f"⏰ Cache expired: {cache_key}")
+                    log_event("info", "cache_expired", cache_key=cache_key)
                     del cache[cache_key]
 
         #2. Request coalescing
-        print(f"🔴 Cache MISS: {cache_key}")
         is_first = False
 
         with cache_lock:
             if cache_key in in_flight_requests:
                 event = in_flight_requests[cache_key]
-                print(f"⏳ Waiting for in-flight request: {cache_key}")
+                log_event("info", "coalesced_wait", cache_key=cache_key)
+                #Think this one is wrong
             else:
                 event = threading.Event()
                 in_flight_requests[cache_key] = event
@@ -117,6 +132,7 @@ class ProxyServer:
                 is_first = True
         
         if is_first:
+            log_event("info", "cache_miss", cache_key=cache_key)
             with metrics_lock:
                 metrics["cache_misses"] += 1
 
@@ -128,7 +144,7 @@ class ProxyServer:
                     with metrics_lock:
                         metrics["cache_hits"] += 1
                     cache.move_to_end(cache_key)
-                    print(f"🟢 Using cached result after wait: {cache_key}")
+                    log_event("info", "coalesced_hit", cache_key=cache_key)
                     return {
                         "status": cached["status"],
                         "headers": cached["headers"],
@@ -163,8 +179,7 @@ class ProxyServer:
                         metrics["evictions"] += 1
 
                     evicted_key, _ = cache.popitem(last = False)
-                    print(f"🗑 Evicting LRU cache entry: {evicted_key}")
-                
+                    log_event("info", "cache_eviction", evicted_key=evicted_key)                
                 cache[cache_key] = {
                     "status": response.status_code,
                     "headers": dict(response.headers),
@@ -234,9 +249,10 @@ def run_server(port, origin, ttl):
     proxy = ProxyServer(origin.rstrip("/"), ttl)
     ProxyHandler.proxy = proxy
     server = ThreadingHTTPServer(("localhost", port), ProxyHandler)
-    print(f"🚀 Caching proxy running on port {port}")
-    print(f"➡️ Forwarding requests to {origin}")
-    print(f"⏳ TTL set to {ttl} seconds")
+    # print(f"🚀 Caching proxy running on port {port}")
+    # print(f"➡️ Forwarding requests to {origin}")
+    # print(f"⏳ TTL set to {ttl} seconds")
+    log_event("info", "server_started", port=port, origin=origin, ttl=ttl)
     server.serve_forever()
 
 if __name__ == "__main__":
@@ -244,11 +260,11 @@ if __name__ == "__main__":
 
     if args.clear_cache:
         cache.clear()
-        print("🧹 Cache cleared")
+        log_event("info", "cache_cleared")
         exit(0)
 
     if not args.port or not args.origin:
-        print("❌ --port and --origin are required")
+        log_event("error", "missing_required_args")
         exit(1)
 
     run_server(args.port, args.origin, args.ttl)
