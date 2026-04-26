@@ -156,9 +156,9 @@ class ProxyServer:
             metrics["origin_requests"] += 1
 
         response = self.fetch_from_origin(path)
-        log_event("info", "origin_fetch", cache_key=cache_key, status=response.status_code)
 
         if response is None:
+            log_event("error", "origin_fetch_failed", cache_key=cache_key)
             with cache_lock:
                 event = in_flight_requests.pop(cache_key, None)
                 if event:
@@ -171,6 +171,7 @@ class ProxyServer:
                 "cache": "MISS"
             }
 
+        log_event("info", "origin_fetch", cache_key=cache_key, status=response.status_code)
         #4. Save in cache
         if response.status_code == 200:
             with cache_lock:
@@ -248,6 +249,7 @@ def run_server(port, origin, ttl):
     proxy = ProxyServer(origin.rstrip("/"), ttl)
     ProxyHandler.proxy = proxy
     server = ThreadingHTTPServer(("localhost", port), ProxyHandler)
+    server.daemon_threads = True
 
     log_event("info", "server_started", port=port, origin=origin, ttl=ttl)
 
