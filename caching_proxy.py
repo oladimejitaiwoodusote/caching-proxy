@@ -5,11 +5,32 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import requests
 import time
 import threading
+import os
+import hashlib
 from collections import OrderedDict
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("proxy")
+
+CACHE_DIR = ".cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+def key_to_filename(key):
+    return hashlib.sha256(key.encode()).hexdigest() + ".json"
+
+def save_to_disk(cache_key, entry):
+    filename = key_to_filename(cache_key)
+    path = os.path.join(CACHE_DIR, filename)
+
+    with open(path, "w") as f:
+        json.dump({
+            "cache_key": cache_key,
+            "status": entry["status"],
+            "headers": entry["headers"],
+            "body": entry["body"].decode("latin1"),
+            "timestamp": entry["timestamp"]
+        }, f)
 
 def log_event(level, event, **kwargs):
     log = {
@@ -62,6 +83,34 @@ class ProxyServer:
     def __init__(self, origin, ttl):
         self.origin = origin
         self.ttl = ttl
+        self.load_cache_from_disk()
+
+    def load_cache_from_disk(self):
+        for file in os.listdir(CACHE_DIR):
+            path = os.path.join(CACHE_DIR, file)
+
+            try:
+                with open(path, "r") as f:
+                    data = json.load(f)
+
+                    cache_key = data["cache_key"]
+
+                    age = time.time() - data["timestamp"]
+                    if age >= self.ttl:
+                        continue
+
+                    with cache_lock:
+                        cache[cache_key] = {
+                            "status": data["status"],
+                            "headers": data["headers"],
+                            "body": data["body"].encode("latin1"),
+                            "timestamp": data["timestamp"]
+                        }
+
+                    log_event("info", "disk_cache_loaded", cache_key=cache_key)
+
+            except Exception as e:
+                log_event("error", "disk_cache_load_failed", error=str(e))
 
     def get_metrics(self):
         with metrics_lock:
@@ -159,6 +208,7 @@ class ProxyServer:
 
         if response is None:
             log_event("error", "origin_fetch_failed", cache_key=cache_key)
+
             with cache_lock:
                 event = in_flight_requests.pop(cache_key, None)
                 if event:
@@ -172,6 +222,7 @@ class ProxyServer:
             }
 
         log_event("info", "origin_fetch", cache_key=cache_key, status=response.status_code)
+
         #4. Save in cache
         if response.status_code == 200:
             with cache_lock:
@@ -187,6 +238,8 @@ class ProxyServer:
                     "body": response.content,
                     "timestamp": time.time()
                 }
+
+                save_to_disk(cache_key, cache[cache_key])
 
                 cache.move_to_end(cache_key)
 
