@@ -32,6 +32,8 @@ def save_to_disk(cache_key, entry):
             "timestamp": entry["timestamp"]
         }, f)
 
+    log_event("info", "disk_cache_saved", cache_key=cache_key)
+
 def log_event(level, event, **kwargs):
     log = {
         "event": event,
