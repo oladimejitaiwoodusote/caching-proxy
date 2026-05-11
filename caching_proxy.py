@@ -34,6 +34,15 @@ def save_to_disk(cache_key, entry):
 
     log_event("info", "disk_cache_saved", cache_key=cache_key)
 
+def delete_disk_cache(cache_key):
+    filename = key_to_filename(cache_key)
+    path = os.path.join(CACHE_DIR, filename)
+
+    if os.path.exists(path):
+        os.remove(path)
+        log_event("info", "disk_cache_deleted", cache_key=cache_key)
+
+
 def log_event(level, event, **kwargs):
     log = {
         "event": event,
@@ -99,6 +108,7 @@ class ProxyServer:
 
                     age = time.time() - data["timestamp"]
                     if age >= self.ttl:
+                        delete_disk_cache(cache_key)
                         continue
 
                     with cache_lock:
@@ -167,6 +177,7 @@ class ProxyServer:
                 else:
                     log_event("info", "cache_expired", cache_key=cache_key)
                     del cache[cache_key]
+                    delete_disk_cache(cache_key)
 
         #2. Request coalescing
         is_first = False
@@ -233,7 +244,9 @@ class ProxyServer:
                         metrics["evictions"] += 1
 
                     evicted_key, _ = cache.popitem(last = False)
-                    log_event("info", "cache_eviction", evicted_key=evicted_key)                
+                    delete_disk_cache(evicted_key)
+                    log_event("info", "cache_eviction", evicted_key=evicted_key)       
+
                 cache[cache_key] = {
                     "status": response.status_code,
                     "headers": dict(response.headers),
@@ -322,6 +335,13 @@ if __name__ == "__main__":
 
     if args.clear_cache:
         cache.clear()
+
+        for file in os.listdir(CACHE_DIR):
+            path = os.path.join(CACHE_DIR, file)
+
+            if os.path.isfile(path):
+                os.remove(path)
+
         log_event("info", "cache_cleared")
         exit(0)
 
