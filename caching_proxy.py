@@ -139,7 +139,14 @@ class ProxyServer:
                 "hit_ratio": round(hit_ratio, 3)
             }
             
-
+    def get_cache_stats(self):
+        with cache_lock:
+            return {
+                "entries": len(cache),
+                "max_entries": MAX_CACHE_ITEMS,
+                "keys": list(cache.keys())
+            }
+    
     def fetch_from_origin(self, path):
         url = self.origin + path
         try:
@@ -278,6 +285,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/metrics":
             data = self.proxy.get_metrics()
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+
+            self.wfile.write(json.dumps(data).encode())
+            return
+
+        if self.path == "/cache":
+            data = self.proxy.get_cache_stats()
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
