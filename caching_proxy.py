@@ -9,6 +9,7 @@ import os
 import hashlib
 from collections import OrderedDict
 from datetime import datetime
+from urllib.parse import urlparse, parse_qs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("proxy")
@@ -41,7 +42,6 @@ def delete_disk_cache(cache_key):
     if os.path.exists(path):
         os.remove(path)
         log_event("info", "disk_cache_deleted", cache_key=cache_key)
-
 
 def log_event(level, event, **kwargs):
     log = {
@@ -147,6 +147,34 @@ class ProxyServer:
                 "keys": list(cache.keys())
             }
     
+    def clear_cache(self):
+        with cache_lock:
+            keys = list(cache.keys())
+
+            cache.clear()
+
+            for key in keys:
+                delete_disk_cache(key)
+
+        log_event("info", "cache_cleared_admin")
+
+    def invalidate_cache_key(self, cache_key):
+        with cache_lock:
+            if cache_key in cache:
+                del cache[cache_key]
+
+                delete_disk_cache(cache_key)
+
+                log_event(
+                    "info",
+                    "cache_key_invalidated",
+                    cache_key=cache_key
+                )
+
+                return True
+
+        return False
+
     def fetch_from_origin(self, path):
         url = self.origin + path
         try:
@@ -155,12 +183,15 @@ class ProxyServer:
             log_event("error", "origin_error", error=str(e))
             return None
 
+    
     def handle_request(self, method, path):
         with metrics_lock:
             metrics["requests"] += 1
 
         cache_key = f"{method}:{path}"
         log_event("info", "request_received", cache_key=cache_key)
+
+    
 
         #1. Check cache
         with cache_lock:
@@ -301,6 +332,44 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
             self.wfile.write(json.dumps(data).encode())
+            return
+
+        if self.path == "/clear-cache":
+            self.proxy.clear_cache()
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+
+            self.wfile.write(
+                json.dumps({"message": "Cache cleared"}).encode()
+            )
+            return
+
+        if self.path.startswith("/invalidate"):
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+
+            cache_key = params.get("key", [None])[0]
+
+            if not cache_key:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Missing key parameter")
+                return
+
+            removed = self.proxy.invalidate_cache_key(cache_key)
+
+            self.send_response(200 if removed else 404)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+
+            self.wfile.write(
+                json.dumps({
+                    "removed": removed,
+                    "cache_key": cache_key
+                }).encode()
+            )
             return
 
         result = self.proxy.handle_request(self.command, self.path)
