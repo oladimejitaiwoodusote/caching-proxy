@@ -58,6 +58,9 @@ metrics = {
     "cache_misses": 0,
     "origin_requests": 0,
     "evictions": 0,
+
+    "total_latency_ms": 0,
+    "total_origin_latency_ms": 0
 }
 
 metrics_lock = threading.Lock()
@@ -129,6 +132,17 @@ class ProxyServer:
             total = metrics["requests"]
             hits = metrics["cache_hits"]
             hit_ratio = (hits / total) if total > 0 else 0
+            avg_latency = (
+                metrics["total_latency_ms"] / total
+                if total > 0 else 0
+            )
+
+            avg_origin_latency = (
+                metrics["total_origin_latency_ms"] /
+                metrics["origin_requests"]
+                if metrics["origin_requests"] > 0
+                else 0
+            )
 
             return {
                 "requests": total,
@@ -136,7 +150,10 @@ class ProxyServer:
                 "cache_misses": metrics["cache_misses"],
                 "origin_requests": metrics["origin_requests"],
                 "evictions": metrics["evictions"],
-                "hit_ratio": round(hit_ratio, 3)
+                "hit_ratio": round(hit_ratio, 3),
+
+                "avg_latency_ms": round(avg_latency, 2),
+                "avg_origin_latency_ms": round(avg_origin_latency, 2)
             }
             
     def get_cache_stats(self):
@@ -185,13 +202,13 @@ class ProxyServer:
 
     
     def handle_request(self, method, path):
+        request_start = time.perf_counter()
+
         with metrics_lock:
             metrics["requests"] += 1
 
         cache_key = f"{method}:{path}"
         log_event("info", "request_received", cache_key=cache_key)
-
-    
 
         #1. Check cache
         with cache_lock:
@@ -206,6 +223,9 @@ class ProxyServer:
                         metrics["cache_hits"] += 1
 
                     log_event("info", "cache_hit", cache_key=cache_key)
+
+                    self.record_request_latency(request_start)
+
                     return {
                         "status": cached["status"],
                         "headers": cached["headers"],
@@ -244,6 +264,8 @@ class ProxyServer:
                         metrics["cache_hits"] += 1
                     cache.move_to_end(cache_key)
                     log_event("info", "coalesced_hit", cache_key=cache_key)
+
+                    self.record_request_latency(request_start)
                     return {
                         "status": cached["status"],
                         "headers": cached["headers"],
@@ -255,7 +277,16 @@ class ProxyServer:
         with metrics_lock:
             metrics["origin_requests"] += 1
 
+        origin_start = time.perf_counter()
+        
         response = self.fetch_from_origin(path)
+
+        origin_latency = (
+            time.perf_counter() - origin_start
+        ) * 1000
+
+        with metrics_lock:
+            metrics["total_latency_ms"] += origin_latency
 
         if response is None:
             log_event("error", "origin_fetch_failed", cache_key=cache_key)
@@ -264,6 +295,8 @@ class ProxyServer:
                 event = in_flight_requests.pop(cache_key, None)
                 if event:
                     event.set()
+            
+            self.record_request_latency(request_start)
             
             return {
                 "status": 502,
@@ -302,6 +335,8 @@ class ProxyServer:
                 event = in_flight_requests.pop(cache_key)
                 event.set()
 
+        self.record_request_latency(request_start)
+
         return {
             "status": response.status_code,
             "headers": dict(response.headers),
@@ -309,6 +344,13 @@ class ProxyServer:
             "cache": "MISS"
         }
 
+    def record_request_latency(self, request_start):
+        latency_ms = (
+            time.perf_counter() - request_start
+        ) * 1000
+
+        with metrics_lock:
+            metrics["total_latency_ms"] += latency_ms
 
 class ProxyHandler(BaseHTTPRequestHandler):
     proxy = None
