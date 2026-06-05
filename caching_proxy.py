@@ -286,7 +286,7 @@ class ProxyServer:
         ) * 1000
 
         with metrics_lock:
-            metrics["total_latency_ms"] += origin_latency
+            metrics["total_origin_latency_ms"] += origin_latency
 
         if response is None:
             log_event("error", "origin_fetch_failed", cache_key=cache_key)
