@@ -10,6 +10,7 @@ import hashlib
 from collections import OrderedDict
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
+from requests.adapters import HTTPAdapter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("proxy")
@@ -97,6 +98,17 @@ class ProxyServer:
     def __init__(self, origin, ttl):
         self.origin = origin
         self.ttl = ttl
+
+        self.session = requests.Session()
+
+        adapter = HTTPAdapter(
+            pool_connections=20,
+            pool_maxsize=20
+        )
+
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+
         self.load_cache_from_disk()
 
     def load_cache_from_disk(self):
@@ -194,8 +206,10 @@ class ProxyServer:
 
     def fetch_from_origin(self, path):
         url = self.origin + path
+
         try:
-            return requests.get(url, timeout=5)
+            return self.session.get(url, timeout=5)
+
         except requests.RequestException as e:
             log_event("error", "origin_error", error=str(e))
             return None
@@ -454,8 +468,11 @@ def run_server(port, origin, ttl):
     except KeyboardInterrupt:
         log_event("info", "shutdown_signal_received")
     finally:
+        proxy.session.close()
+
         server.shutdown()
         server.server_close()
+        
         log_event("info", "server_stopped")
 
 if __name__ == "__main__":
