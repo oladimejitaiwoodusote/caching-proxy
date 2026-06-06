@@ -11,6 +11,7 @@ from collections import OrderedDict
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("proxy")
@@ -103,13 +104,27 @@ class ProxyServer:
 
         adapter = HTTPAdapter(
             pool_connections=20,
-            pool_maxsize=20
+            pool_maxsize=20,
+            max_retries=retry_strategy
         )
 
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
 
         self.load_cache_from_disk()
+
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[
+                429,
+                500,
+                502,
+                503,
+                504
+            ]
+        )
+
 
     def load_cache_from_disk(self):
         for file in os.listdir(CACHE_DIR):
@@ -472,7 +487,7 @@ def run_server(port, origin, ttl):
 
         server.shutdown()
         server.server_close()
-        
+
         log_event("info", "server_stopped")
 
 if __name__ == "__main__":
