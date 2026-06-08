@@ -102,6 +102,13 @@ class ProxyServer:
 
         self.session = requests.Session()
 
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[429,500,502,503,504],
+            allowed_methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"]
+        )
+        
         adapter = HTTPAdapter(
             pool_connections=20,
             pool_maxsize=20,
@@ -113,17 +120,7 @@ class ProxyServer:
 
         self.load_cache_from_disk()
 
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=0.5,
-            status_forcelist=[
-                429,
-                500,
-                502,
-                503,
-                504
-            ]
-        )
+
 
 
     def load_cache_from_disk(self):
