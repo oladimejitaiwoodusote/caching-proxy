@@ -472,7 +472,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 def run_server(port, origin, ttl):
     proxy = ProxyServer(origin.rstrip("/"), ttl)
     ProxyHandler.proxy = proxy
-    server = ThreadingHTTPServer(("localhost", port), ProxyHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", port), ProxyHandler)
     server.daemon_threads = True
 
     log_event("info", "server_started", port=port, origin=origin, ttl=ttl)
