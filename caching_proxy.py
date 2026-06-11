@@ -76,10 +76,26 @@ in_flight_requests = {}
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple caching proxy")
-    parser.add_argument("--port", type=int, help="Port to run the proxy on")
-    parser.add_argument("--origin", type=str, help="Origin server URL")
-    parser.add_argument("--clear-cache", action="store_true")
-    parser.add_argument("--ttl", type=int, default=30, help="Cache TTL in seconds")
+    parser.add_argument("--port",
+     type=int, 
+     default=int(os.getenv("PORT", 8000)),
+     help="Port to run the proxy on")
+
+    parser.add_argument("--origin",
+     type=str, 
+     default=os.getenv("ORIGIN"),
+     help="Origin server URL")
+
+    parser.add_argument("--clear-cache",
+    action="store_true",
+    help="Clear both memory and disk cache and exit"
+    )
+
+    parser.add_argument("--ttl", 
+    type=int, 
+    default=30, 
+    help="Cache TTL in seconds")
+    
     return parser.parse_args()
 
 HOP_BY_HOP = {
