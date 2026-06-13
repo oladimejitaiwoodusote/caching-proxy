@@ -88,9 +88,11 @@ A Python-based HTTP caching proxy that forwards request to an origin server whil
 
 ### Run
 
-`docker run -p 8000:8000 \
+```bash
+docker run -p 8000:8000 \
   -e PORT=8000 \
   -e ORIGIN=https://jsonplaceholder.typicode.com \
   -e TTL=60 \
   caching-proxy \
-  python caching_proxy.py --port 8000 --origin $ORIGIN`
+  python caching_proxy.py --port 8000 --origin $ORIGIN
+```
