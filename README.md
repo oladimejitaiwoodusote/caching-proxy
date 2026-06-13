@@ -96,3 +96,12 @@ docker run -p 8000:8000 \
   caching-proxy \
   python caching_proxy.py --port 8000 --origin $ORIGIN
 ```
+
+## What this project demonstrates
+
+- Real caching system design
+- Concurrency handling in Python
+- Cache invalidation + TTL logic
+- Persistent storage layer
+- Production-style observability
+- Dockerized deployment
