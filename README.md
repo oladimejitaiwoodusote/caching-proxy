@@ -57,6 +57,40 @@ A Python-based HTTP caching proxy that forwards request to an origin server whil
 
 1. Request arrives
 2. Check in-memory cache
-3. If hit -> return immediately 
+3. If hit → return immediately 
 4. If miss:
     - Check request coalescing
+    - Fetch from origin if needed
+    - Store in memory → disk
+5. Return response
+
+### Cache Lifestyle
+
+- Stored in memory (LRU)
+- Persisted to disk
+- Expired via TTL
+- Evicted when full
+
+## Tech Stack
+
+- Python 3
+- `http.server`
+- `requests`
+- `urlib3`
+- threading (Lock, Event)
+- Docker
+
+## Docker
+
+### Build
+
+`docker build -t caching-proxy .`
+
+### Run
+
+`docker run -p 8000:8000 \
+  -e PORT=8000 \
+  -e ORIGIN=https://jsonplaceholder.typicode.com \
+  -e TTL=60 \
+  caching-proxy \
+  python caching_proxy.py --port 8000 --origin $ORIGIN`
