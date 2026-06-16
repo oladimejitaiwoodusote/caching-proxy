@@ -81,13 +81,37 @@ flowchart LR
     Proxy[HTTP Caching Proxy]
 
     Memory[In-Memory LRU Cache]
-    Disk[Dish cache .cache/]
+    Disk[Disk Cache .cache/]
     Origin[Origin Server]
 
     Metrics["/metrics"]
-    CachingAPI["/cache"]
+    CacheAPI["/cache"]
+    Invalidate["/invalidate"]
+    Clear["/clear-cache"]
 
+    Logs[Structured JSON Logs]
 
+    Client --> Proxy
+
+    Proxy --> Memory
+
+    Memory -->|Cache HIT| Client
+
+    Memory -->|Cache Miss| Origin
+
+    Origin --> Proxy
+
+    Proxy --> Memory
+    Proxy --> Disk
+
+    Disk --> Proxy
+
+    Proxy --> Metrics
+    Proxy --> CacheAPI
+    Proxy --> Invalidate
+    Proxy --> Clear
+
+    Proxy --> Logs
 ```
 
 ## Tech Stack
