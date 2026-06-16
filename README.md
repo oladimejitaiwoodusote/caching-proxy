@@ -114,6 +114,31 @@ flowchart LR
     Proxy --> Logs
 ```
 
+### Request Coalescing Flow
+
+```mermaid
+SequenceDiagram
+
+    participant Client1
+    participant Client2
+    participant Proxy
+    participant Origin
+
+    Client1->>Proxy: GET /users
+    Proxy->>Proxy: Cache Miss
+
+    Client2->>Proxy: GET /users
+    Proxy->>Proxy: Wait on in-flight request
+
+    Proxy->>Origin: Fetch resource
+    Origin-->>Proxy: Response
+
+    Proxy->>Proxy: Save to cache
+
+    Proxy-->>Client1: Response (MISS)
+    Proxy-->>Client2: Response (HIT)
+```
+
 ## Tech Stack
 
 - Python 3
