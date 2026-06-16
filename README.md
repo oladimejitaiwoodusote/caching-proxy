@@ -71,6 +71,25 @@ A Python-based HTTP caching proxy that forwards request to an origin server whil
 - Expired via TTL
 - Evicted when full
 
+## Architecture 
+
+```mermaid
+flowchart LR
+
+    Client[Client]
+
+    Proxy[HTTP Caching Proxy]
+
+    Memory[In-Memory LRU Cache]
+    Disk[Dish cache .cache/]
+    Origin[Origin Server]
+
+    Metrics["/metrics"]
+    CachingAPI[]
+
+
+```
+
 ## Tech Stack
 
 - Python 3
