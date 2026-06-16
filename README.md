@@ -85,7 +85,7 @@ flowchart LR
     Origin[Origin Server]
 
     Metrics["/metrics"]
-    CachingAPI[]
+    CachingAPI["/cache"]
 
 
 ```
