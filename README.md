@@ -117,7 +117,7 @@ flowchart LR
 ### Request Coalescing Flow
 
 ```mermaid
-SequenceDiagram
+sequenceDiagram
 
     participant Client1
     participant Client2
@@ -125,7 +125,7 @@ SequenceDiagram
     participant Origin
 
     Client1->>Proxy: GET /users
-    Proxy->>Proxy: Cache Miss
+    Proxy->>Proxy: Cache MISS
 
     Client2->>Proxy: GET /users
     Proxy->>Proxy: Wait on in-flight request
@@ -167,9 +167,13 @@ docker run -p 8000:8000 \
 
 ## What this project demonstrates
 
-- Real caching system design
-- Concurrency handling in Python
-- Cache invalidation + TTL logic
-- Persistent storage layer
-- Production-style observability
+- HTTP proxy server design
+- In-memory and disk-backed caching
+- LRU eviction strategies
+- TTL-based cache expiration
+- Thread-safe shared state management
+- Request coalescing under concurrent load
+- Connection pooling and retry strategies
+- Structured logging and metrics collection
+- Cache invalidation workflows
 - Dockerized deployment
