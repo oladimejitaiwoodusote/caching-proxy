@@ -1,6 +1,6 @@
 # HTTP Caching Proxy
 
-A Python-based HTTP caching proxy that forwards request to an origin server while adding caching, persistence, concurrency control, and observability features.
+A Python-based HTTP caching proxy that forwards requests to an origin server while adding caching, persistence, concurrency control, and observability features.
 
 ## Features
 
@@ -17,7 +17,7 @@ A Python-based HTTP caching proxy that forwards request to an origin server whil
 - Configurable cache size
 - Cache key format: `METHOD:PATH`
 
-### Persistance
+### Persistence
 
 - Disk-based cache using `.cache/` directory
 - Survives server restarts
@@ -33,7 +33,7 @@ A Python-based HTTP caching proxy that forwards request to an origin server whil
 ### Performance Optimizations
 
 - Connection pooling via `requests.Session`
-- Retry strategy with exponential backoff (urlib3)
+- Retry strategy with exponential backoff (urllib3)
 
 ### Observability
 
@@ -47,9 +47,9 @@ A Python-based HTTP caching proxy that forwards request to an origin server whil
 
 ### Admin Endpoints
 
-- `GET/ cache` → view cache state
-- `GET/ clear-cache` → clear cache
-- `GET/ invalidate?key=...` → invalidate entry
+- `GET /cache` → view cache state
+- `GET /clear-cache` → clear cache
+- `GET /invalidate?key=...` → invalidate entry
 
 ## How It Works
 
@@ -144,7 +144,7 @@ sequenceDiagram
 - Python 3
 - `http.server`
 - `requests`
-- `urlib3`
+- `urllib3`
 - threading (Lock, Event)
 - Docker
 
