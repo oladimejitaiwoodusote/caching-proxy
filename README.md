@@ -161,8 +161,7 @@ docker run -p 8000:8000 \
   -e PORT=8000 \
   -e ORIGIN=https://jsonplaceholder.typicode.com \
   -e TTL=60 \
-  caching-proxy \
-  python caching_proxy.py --port 8000 --origin $ORIGIN
+  caching-proxy 
 ```
 
 ## What this project demonstrates
